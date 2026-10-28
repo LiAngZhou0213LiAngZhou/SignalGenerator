@@ -1,8 +1,8 @@
 # ESP32-C3 SuperMini 单通道信号发生器
 
 基于 Arduino 框架（Arduino IDE 2.x）的单通道信号发生器固件。默认通过 **BLE** 与电脑
-通信：电脑用 Chrome/Edge 打开本目录下的 `panel.html`（Web Bluetooth），无需安装任何
-软件，也不用断开电脑自己的 WiFi。
+通信：电脑用 Chrome/Edge 打开本目录下的 `ESP32C3-SignalGen.html`（Web Bluetooth），
+无需安装任何软件，也不用断开电脑自己的 WiFi。
 
 > **传输层选择**：固件顶部 `#define USE_WIFI_AP 0`。
 > `0` = BLE + PC 端页面（默认）；`1` = 原来的 WiFi 热点 + 固件内嵌网页。
@@ -43,7 +43,7 @@ SignalGenerator.ino     主程序：命令解析、BLE GATT 服务（或 WiFi AP
                         NVS 存取
 config.h                引脚、参数范围、模式定义、配置结构体
 output_engine.h/.cpp    输出引擎：LEDC PWM + 软件相位机（模式2/3/4/5、低频PWM）
-panel.html              PC 端控制面板（Web Bluetooth），用 Chrome/Edge 通过 localhost 打开
+ESP32C3-SignalGen.html  PC 端控制面板（Web Bluetooth），用 Chrome/Edge 通过 localhost 打开
 ```
 
 ## Arduino IDE 配置
@@ -95,7 +95,7 @@ GPIO1 ──[1kΩ]──────────── 基极 B
 ## 使用方法（BLE 模式，默认）
 
 1. 开发板上电，串口打印 `BLE: SignalGen-ESP32-1 已开始广播`。
-2. 电脑上用 **Chrome 或 Edge** 打开本目录的 `panel.html`。
+2. 电脑上用 **Chrome 或 Edge** 打开本目录的 `ESP32C3-SignalGen.html`。
    Web Bluetooth 只在安全上下文（`https://` 或 `localhost`）可用，直接双击
    `file://` 打开会被拦，先在项目目录起一个本地静态服务：
 
@@ -103,7 +103,7 @@ GPIO1 ──[1kΩ]──────────── 基极 B
    python -m http.server 8000
    ```
 
-   然后浏览器访问 `http://localhost:8000/panel.html`。
+   然后浏览器访问 `http://localhost:8000/ESP32C3-SignalGen.html`。
 3. 点"连接设备"，在弹出的选择框里选 **SignalGen-ESP32-1**（首次需要授权；
    之后可用"重新连接"直接连回，不必重新选）。
 4. 选择模式 → 填写参数 → 点"应用"立即生效；"保存设置" 写入 NVS，下次上电恢复。
@@ -139,7 +139,7 @@ GPIO1 ──[1kΩ]──────────── 基极 B
 | `save` | `已保存` |
 
 > ATT 默认 MTU 只有 23（20 字节有效载荷），所以收发两端都按 `\n` 拼包，
-> 固件发送时按协商后的 MTU 自动分片，`panel.html` 发送时固定 20 字节一片。
+> 固件发送时按协商后的 MTU 自动分片，`ESP32C3-SignalGen.html` 发送时固定 20 字节一片。
 > Windows 一般会协商到 247，此时一条回复通常是一包发完。
 
 ## 常见故障

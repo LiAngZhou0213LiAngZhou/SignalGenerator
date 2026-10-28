@@ -9,7 +9,7 @@
 
 // ===================== 传输层选择 =====================
 // 1 = WiFi 热点 + 固件内嵌网页（原方案，面板从固件里取）
-// 0 = BLE + PC 端 Web Bluetooth 页面（panel.html，页面放在电脑上）
+// 0 = BLE + PC 端 Web Bluetooth 页面（ESP32C3-SignalGen.html，页面放在电脑上）
 // 两者共用同一 2.4GHz 射频，同时开启需要分时共存（RAM 与稳定性都更紧张），故二选一。
 #define USE_WIFI_AP 0
 
