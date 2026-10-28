@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>信号发生器控制面板 · BLE</title>
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:1000px;margin:16px auto;padding:0 12px;background:#f5f6f8;color:#222}
+h1{font-size:20px;margin:8px 0}
+.note{background:#fff8e1;border:1px solid #eed484;border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.6;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
+.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.head{font-weight:600;margin-bottom:8px;font-size:15px}
+.row{display:none;align-items:center;justify-content:space-between;margin:6px 0;font-size:14px}
+.row.mode-row{display:flex}
+.show-pwm .pwm,.show-pat .pat,.show-big .big{display:flex}
+.card input,.card select{width:130px;padding:4px 6px;border:1px solid #bbb;border-radius:6px;box-sizing:border-box}
+.card button{margin-top:10px;width:100%}
+.bar{margin:14px 0;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#status{font-size:13px;color:#555;word-break:break-all}
+#status.err{color:#b91c1c}
+.conn{margin-left:auto;font-size:13px;padding:5px 12px;border-radius:999px;background:#e2e8f0;color:#64748b}
+.conn.ok{background:#dcfce7;color:#15803d}
+.conn.bad{background:#fee2e2;color:#b91c1c}
+.footer{text-align:center;color:#94a3b8;font-size:13px;margin:18px 0 6px}
+button{padding:7px 14px;border:none;border-radius:7px;background:#2563eb;color:#fff;font-size:14px;cursor:pointer}
+button:hover{background:#1d4ed8}
+button.ghost{background:#64748b}
+button.ghost:hover{background:#475569}
+button:disabled{background:#cbd5e1;cursor:not-allowed}
+</style>
+</head>
+<body>
+<h1>信号发生器控制面板 · ESP32-C3（BLE）</h1>
+<div class="note">
+  <b>任何含有PWM的模式：</b>需要外接上拉电源，上拉电源决定了PWM高边的电压，频率 0~2kHz。<br>
+  <b>低电平循环和大周期循环模式：</b>不用接上拉电源，作用是将被控波形按规律拉低，高阻 = 三极管截止，低 = 三极管导通拉低。<br>
+  <b>使用时注意共地</b>。
+</div>
+<div class="grid" id="channels"></div>
+<div class="bar">
+  <button onclick="connectDevice()">连接设备</button>
+  <button class="ghost" onclick="reconnectDevice()">重新连接</button>
+  <button onclick="saveAll()">保存设置</button>
+  <span id="status"></span>
+  <span id="conn" class="conn">● 未连接</span>
+</div>
+<div class="footer">作者：忙碌的小周</div>
+<script>
+const SVC = '8f2d0001-9b6a-4d1e-8c3f-6a1b2c3d4e5f';
+const RX_UUID = '8f2d0002-9b6a-4d1e-8c3f-6a1b2c3d4e5f';
+const TX_UUID = '8f2d0003-9b6a-4d1e-8c3f-6a1b2c3d4e5f';
+const CHUNK = 20;          // 未协商 MTU 时单包有效载荷上限是 20 字节
+const PINS = [1];
+
+let device = null, rxChar = null, txChar = null;
+let connected = false;
+let rxBuf = '';            // 通知按行拼包
+let pending = null;        // 同一时刻只允许一个未完成请求
+let editing = false;
+
+addEventListener('focusin', () => editing = true);
+addEventListener('focusout', () => editing = false);
+
+function modeOptions() {
+  return '<option value="0">关闭</option>'
+    + '<option value="1">PWM</option>'
+    + '<option value="2">低电平循环（x高阻/y低）</option>'
+    + '<option value="3">大周期循环（z）</option>'
+    + '<option value="4">(PWM/拉低)循环</option>'
+    + '<option value="5">(PWM/拉低)大周期循环</option>';
+}
+
+function cardHTML(i) {
+  return `<div class="card" id="card${i}">
+    <div class="head">通道 ${i} · GPIO${PINS[i]}</div>
+    <div class="row mode-row"><label>模式</label>
+      <select id="mode${i}" onchange="syncFields(${i})">${modeOptions()}</select>
+    </div>
+    <div class="row pwm"><label>频率 Hz</label><input id="f${i}" type="number" min="0" max="2000" step="0.1" value="1000"></div>
+    <div class="row pwm"><label>占空比 %</label><input id="duty${i}" type="number" min="0" max="100" step="1" value="50"></div>
+    <div class="row pat"><label id="xlbl${i}">x 高阻 (s)</label><input id="x${i}" type="number" min="0.1" max="3600" step="0.1" value="1.0"></div>
+    <div class="row pat"><label id="ylbl${i}">y 低 (s)</label><input id="y${i}" type="number" min="0.1" max="3600" step="0.1" value="1.0"></div>
+    <div class="row big"><label>a 拉低次数</label><input id="a${i}" type="number" min="1" max="10000" step="1" value="5"></div>
+    <div class="row big"><label>z 大周期 (s)</label><input id="z${i}" type="number" min="0.1" max="86400" step="0.1" value="10.0"></div>
+    <button onclick="apply(${i})">应用</button>
+  </div>`;
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  let h = '';
+  for (let i = 0; i < PINS.length; i++) h += cardHTML(i);
+  document.getElementById('channels').innerHTML = h;
+  syncFields(0);
+  setInterval(pollStatus, 2000);
+  if (!navigator.bluetooth) {
+    setStatus('当前浏览器不支持 Web Bluetooth：请用 Chrome/Edge，并通过 http://localhost 打开本页', true);
+  }
+});
+
+function syncFields(i) {
+  const m = +document.getElementById('mode' + i).value;
+  const card = document.getElementById('card' + i);
+  card.classList.toggle('show-pwm', m === 1 || m === 4 || m === 5);
+  card.classList.toggle('show-pat', m === 2 || m === 3 || m === 4 || m === 5);
+  card.classList.toggle('show-big', m === 3 || m === 5);
+  const pwmXY = m === 4 || m === 5;
+  const xl = document.getElementById('xlbl' + i);
+  const yl = document.getElementById('ylbl' + i);
+  if (xl) xl.textContent = pwmXY ? 'x PWM (s)' : 'x 高阻 (s)';
+  if (yl) yl.textContent = pwmXY ? 'y 拉低 (s)' : 'y 低 (s)';
+}
+
+function setStatus(t, isErr) {
+  const el = document.getElementById('status');
+  el.textContent = t;
+  el.classList.toggle('err', !!isErr);
+}
+
+function setConn(ok) {
+  const el = document.getElementById('conn');
+  el.classList.toggle('ok', ok);
+  el.classList.toggle('bad', !ok);
+  el.textContent = ok ? '● 已连接' : '● 未连接';
+}
+
+// ---------------- BLE 传输 ----------------
+
+function onNotify(event) {
+  rxBuf += new TextDecoder().decode(event.target.value);
+  let idx;
+  while ((idx = rxBuf.indexOf('\n')) >= 0) {
+    const line = rxBuf.slice(0, idx);
+    rxBuf = rxBuf.slice(idx + 1);
+    if (pending) {
+      const p = pending;
+      pending = null;
+      clearTimeout(p.timer);
+      p.resolve(line);
+    }
+  }
+}
+
+function onDisconnected() {
+  connected = false;
+  rxChar = null;
+  txChar = null;
+  rxBuf = '';
+  if (pending) { clearTimeout(pending.timer); pending.reject(new Error('连接已断开')); pending = null; }
+  setConn(false);
+  setStatus('连接已断开，可点“重新连接”');
+}
+
+async function writeChunks(text) {
+  if (!rxChar) throw new Error('未连接');
+  const data = new TextEncoder().encode(text);
+  for (let i = 0; i < data.length; i += CHUNK) {
+    const part = data.slice(i, i + CHUNK);
+    if (rxChar.writeValueWithResponse) await rxChar.writeValueWithResponse(part);
+    else await rxChar.writeValue(part);
+  }
+}
+
+// 发送一条命令并等待一行回复（命令与回复都是换行结尾的文本）
+async function request(cmd, timeoutMs = 1500) {
+  if (!connected || !rxChar) throw new Error('未连接');
+  if (pending) throw new Error('上一条命令尚未完成');
+  const p = new Promise((resolve, reject) => {
+    pending = {
+      resolve, reject,
+      timer: setTimeout(() => { pending = null; reject(new Error('回复超时')); }, timeoutMs)
+    };
+  });
+  try {
+    await writeChunks(cmd + '\n');
+  } catch (e) {
+    if (pending) { clearTimeout(pending.timer); pending = null; }
+    throw e;
+  }
+  return p;
+}
+
+// 用户操作前先等后台状态轮询那条请求结束，避免撞车
+async function waitIdle(timeoutMs = 800) {
+  const t0 = Date.now();
+  while (pending && Date.now() - t0 < timeoutMs) {
+    await new Promise(r => setTimeout(r, 30));
+  }
+}
+
+async function connectGatt() {
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SVC);
+  rxChar = await svc.getCharacteristic(RX_UUID);
+  txChar = await svc.getCharacteristic(TX_UUID);
+  await txChar.startNotifications();
+  txChar.addEventListener('characteristicvaluechanged', onNotify);
+  connected = true;
+  setConn(true);
+  setStatus('已连接：' + (device.name || '未命名设备'));
+  await syncStatus();
+}
+
+async function connectDevice() {
+  if (!navigator.bluetooth) {
+    setStatus('当前浏览器不支持 Web Bluetooth，请改用 Chrome/Edge', true);
+    return;
+  }
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SVC] }],
+      optionalServices: [SVC]
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    setStatus('正在连接…');
+    await connectGatt();
+  } catch (e) {
+    setStatus('连接失败：' + e.message, true);
+  }
+}
+
+async function reconnectDevice() {
+  if (!navigator.bluetooth) return;
+  try {
+    const devices = await navigator.bluetooth.getDevices();
+    const found = devices.find(d => d.name && d.name.indexOf('SignalGen') === 0);
+    if (!found) {
+      setStatus('没有已授权的设备，请点“连接设备”重新选择', true);
+      return;
+    }
+    device = found;
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    setStatus('正在重连…');
+    await connectGatt();
+  } catch (e) {
+    setStatus('重连失败：' + e.message, true);
+  }
+}
+
+// ---------------- 业务逻辑 ----------------
+
+async function syncStatus() {
+  if (!connected) return;
+  try {
+    const text = await request('status');
+    const j = JSON.parse(text);
+    for (let i = 0; i < PINS.length; i++) {
+      const c = j.channels[i];
+      if (!c) continue;
+      const setv = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.value = v;
+      };
+      setv('mode' + i, c.mode);
+      setv('f' + i, c.f);
+      setv('duty' + i, c.duty);
+      setv('x' + i, c.x);
+      setv('y' + i, c.y);
+      setv('z' + i, c.z);
+      setv('a' + i, c.a);
+      syncFields(i);
+    }
+  } catch (e) {
+    if (/断开/.test(e.message)) setConn(false);
+  }
+}
+
+async function pollStatus() {
+  if (!connected || editing) return;
+  await syncStatus();
+}
+
+async function apply(i) {
+  if (!connected) {
+    setStatus('请先连接设备', true);
+    return;
+  }
+  const q = new URLSearchParams();
+  q.set('ch', i);
+  q.set('mode', document.getElementById('mode' + i).value);
+  const setq = (id, key) => {
+    const el = document.getElementById(id);
+    if (el) q.set(key, el.value);
+  };
+  setq('f' + i, 'f');
+  setq('duty' + i, 'duty');
+  setq('x' + i, 'x');
+  setq('y' + i, 'y');
+  setq('z' + i, 'z');
+  setq('a' + i, 'a');
+  try {
+    await waitIdle();
+    const t = await request('set?' + q.toString());
+    setStatus('CH' + i + ': ' + t, t !== 'OK');
+  } catch (e) {
+    setStatus('CH' + i + ': ' + e.message, true);
+  }
+}
+
+async function saveAll() {
+  if (!connected) {
+    setStatus('请先连接设备', true);
+    return;
+  }
+  try {
+    await waitIdle();
+    const t = await request('save');
+    setStatus(t, t !== '已保存');
+  } catch (e) {
+    setStatus('保存失败：' + e.message, true);
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+# Arduino 编译产物
+build/
+
+# 临时截图目录
+.screenshots/.tmp/
