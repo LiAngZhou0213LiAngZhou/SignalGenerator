@@ -159,13 +159,13 @@ static float pwmEdge(ChanRuntime* r) {
   const ChannelConfig& c = r->cfg;
   float edge;
   if (r->subPhase == 0) {
-    r->level = false;  // 集电极高
+    r->level = false;  // 集电极高，占面板占空比 dutyPct
     r->subPhase = 1;
-    edge = (100.0f - c.dutyPct) * 0.01f / c.freqHz;
-  } else {
-    r->level = true;   // 集电极低
-    r->subPhase = 0;
     edge = c.dutyPct * 0.01f / c.freqHz;
+  } else {
+    r->level = true;   // 集电极低，占剩余 (100 - dutyPct)
+    r->subPhase = 0;
+    edge = (100.0f - c.dutyPct) * 0.01f / c.freqHz;
   }
   if (edge >= r->pwmRemain) {
     edge = r->pwmRemain;
@@ -237,14 +237,16 @@ static float nextPhase(ChanRuntime* r) {
   switch (c.mode) {
     case MODE_PWM: {
       // 软件 PWM（f < LEDC_MIN_HZ）
+      // level=false 是集电极高，对应面板占空比 dutyPct；
+      // level=true 是集电极低，对应 (100 - dutyPct)。
       if (r->phase == 0) {
         r->level = false;  // 集电极高
         r->phase = 1;
-        return (100.0f - c.dutyPct) * 0.01f / c.freqHz;
+        return c.dutyPct * 0.01f / c.freqHz;
       } else {
         r->level = true;   // 集电极低
         r->phase = 0;
-        return c.dutyPct * 0.01f / c.freqHz;
+        return (100.0f - c.dutyPct) * 0.01f / c.freqHz;
       }
     }
 

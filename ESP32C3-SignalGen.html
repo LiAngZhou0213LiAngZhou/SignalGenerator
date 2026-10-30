@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>信号发生器控制面板 · BLE</title>
+<title>信号发生器控制面板 · BLE · V2.0</title>
 <style>
 body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:1000px;margin:16px auto;padding:0 12px;background:#f5f6f8;color:#222}
 h1{font-size:20px;margin:8px 0}
+.ver{display:inline-block;margin-left:8px;padding:2px 8px;border-radius:6px;background:#0ea5e9;color:#fff;font-size:13px;vertical-align:middle}
 .note{background:#fff8e1;border:1px solid #eed484;border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.6;margin-bottom:14px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:12px}
 .card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
@@ -31,11 +32,12 @@ button:disabled{background:#cbd5e1;cursor:not-allowed}
 </style>
 </head>
 <body>
-<h1>信号发生器控制面板 · ESP32-C3（BLE）</h1>
+<h1>信号发生器控制面板 · ESP32-C3（BLE）<span class="ver">V2.0</span></h1>
 <div class="note">
-  <b>任何含有PWM的模式：</b>需要外接上拉电源，上拉电源决定了PWM高边的电压，频率 0~2kHz。<br>
-  <b>低电平循环和大周期循环模式：</b>不用接上拉电源，作用是将被控波形按规律拉低，高阻 = 三极管截止，低 = 三极管导通拉低。<br>
-  <b>使用时注意共地</b>。
+  <b>使用方法：</b><br>
+  1、先接线，将共地引脚接电源箱负极，上拉引脚接电源箱正极，信号引脚接控制器被测针脚。<br>
+  2、用手机充电器type-c给模块供电，避免使用电脑USB供电，防止不当接线造成的电涌烧坏电脑，在电脑edge浏览器打开控制网页，点击连接有“SignalGen-ESP32”标识的蓝牙，然后选择好模式后点击应用。需要注意的是，如果你的控制器本身就在输出一个PWM，而你在模式选择上也选择了带有PWM功能的模式，那么可能对控制器输出的PWM造成干扰，主要表现在可能会影响到占空比。所以控制器针脚有PWM输出的情况下，不要选择含有PWM的模式。<br>
+  3、模块上的电位器旋钮决定着上拉电阻的大小，较低的阻值会引起被控波形低边电压的抬升，示波器上可以看到这种变化，可以利用这一点依照水泵或风扇的规格书对软件内故障检测的低边认定阀值合理性进行校验。
 </div>
 <div class="grid" id="channels"></div>
 <div class="bar">
@@ -64,11 +66,11 @@ addEventListener('focusout', () => editing = false);
 
 function modeOptions() {
   return '<option value="0">关闭</option>'
-    + '<option value="1">PWM</option>'
-    + '<option value="2">低电平循环（x高阻/y低）</option>'
-    + '<option value="3">大周期循环（z）</option>'
-    + '<option value="4">(PWM/拉低)循环</option>'
-    + '<option value="5">(PWM/拉低)大周期循环</option>';
+    + '<option value="1">普通PWM</option>'
+    + '<option value="2">将控制器波形循环拉低（x释放时间/y拉低时间）</option>'
+    + '<option value="3">将控制器波形循环拉低，带大周期z（一个周期内a次拉低后将波形释放）</option>'
+    + '<option value="4">循环输出PWM/低边</option>'
+    + '<option value="5">循环输出PWM/低边，带大周期z（一个周期内a次输出低边后输出PWM）</option>';
 }
 
 function cardHTML(i) {
@@ -79,10 +81,10 @@ function cardHTML(i) {
     </div>
     <div class="row pwm"><label>频率 Hz</label><input id="f${i}" type="number" min="0" max="2000" step="0.1" value="1000"></div>
     <div class="row pwm"><label>占空比 %</label><input id="duty${i}" type="number" min="0" max="100" step="1" value="50"></div>
-    <div class="row pat"><label id="xlbl${i}">x 高阻 (s)</label><input id="x${i}" type="number" min="0.1" max="3600" step="0.1" value="1.0"></div>
-    <div class="row pat"><label id="ylbl${i}">y 低 (s)</label><input id="y${i}" type="number" min="0.1" max="3600" step="0.1" value="1.0"></div>
-    <div class="row big"><label>a 拉低次数</label><input id="a${i}" type="number" min="1" max="10000" step="1" value="5"></div>
-    <div class="row big"><label>z 大周期 (s)</label><input id="z${i}" type="number" min="0.1" max="86400" step="0.1" value="10.0"></div>
+    <div class="row pat"><label id="xlbl${i}">x 释放时间 (s)</label><input id="x${i}" type="number" min="0.1" max="3600" step="0.1" value="1.0"></div>
+    <div class="row pat"><label id="ylbl${i}">y 拉低时间 (s)</label><input id="y${i}" type="number" min="0.1" max="3600" step="0.1" value="1.0"></div>
+    <div class="row big"><label id="albl${i}">a 拉低次数（每周期）</label><input id="a${i}" type="number" min="1" max="10000" step="1" value="5"></div>
+    <div class="row big"><label id="zlbl${i}">z 大周期时间 (s)</label><input id="z${i}" type="number" min="0.1" max="86400" step="0.1" value="10.0"></div>
     <button onclick="apply(${i})">应用</button>
   </div>`;
 }
@@ -107,8 +109,12 @@ function syncFields(i) {
   const pwmXY = m === 4 || m === 5;
   const xl = document.getElementById('xlbl' + i);
   const yl = document.getElementById('ylbl' + i);
-  if (xl) xl.textContent = pwmXY ? 'x PWM (s)' : 'x 高阻 (s)';
-  if (yl) yl.textContent = pwmXY ? 'y 拉低 (s)' : 'y 低 (s)';
+  if (xl) xl.textContent = pwmXY ? 'x PWM 输出时间 (s)' : 'x 释放时间 (s)';
+  if (yl) yl.textContent = pwmXY ? 'y 低边时间 (s)' : 'y 拉低时间 (s)';
+  const aLbl = document.getElementById('albl' + i);
+  const zLbl = document.getElementById('zlbl' + i);
+  if (aLbl) aLbl.textContent = m === 5 ? 'a 输出低边次数（每周期）' : 'a 拉低次数（每周期）';
+  if (zLbl) zLbl.textContent = 'z 大周期时间 (s)';
 }
 
 function setStatus(t, isErr) {
